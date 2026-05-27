@@ -12,6 +12,7 @@ class ClipboardMonitor:
     def __init__(self):
         self._stop_event = threading.Event()
         self._thread = None
+        self._clip_exe = Path(__file__).parent / "clip.exe"
 
     @property
     def running(self):
@@ -21,7 +22,8 @@ class ClipboardMonitor:
         if self.running:
             return
         self._stop_event.clear()
-        Path("records").mkdir(exist_ok=True)
+        records_dir = Path(__file__).parent / "records"
+        records_dir.mkdir(exist_ok=True)
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -35,40 +37,48 @@ class ClipboardMonitor:
         while not self._stop_event.is_set():
             try:
                 result = subprocess.run(
-                    ["clip.exe"],
+                    [str(self._clip_exe)],
                     capture_output=True,
                     encoding="utf-8",
+                    errors="replace",
                     timeout=5
                 )
+
+                if result.returncode != 0:
+                    time.sleep(1)
+                    continue
+
+                if result.stdout is None:
+                    time.sleep(1)
+                    continue
+                text = result.stdout.strip()
+                if text == last_text or text == "":
+                    time.sleep(1)
+                    continue
+
+                date_str = datetime.now().strftime("%Y-%m-%d")
+                record = {
+                    "time": datetime.now().isoformat(),
+                    "text": text,
+                    "length": len(text)
+                }
+
+                filepath = str(
+                    self._clip_exe.parent / "records" / f"{date_str}.jsonl"
+                )
+                with open(filepath, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+                last_text = text
+                print(f"[{record['time']}] recorded ({len(text)} chars)")
+
             except FileNotFoundError:
                 print("[ERROR] clip.exe not found")
                 break
             except subprocess.TimeoutExpired:
-                time.sleep(1)
-                continue
-
-            if result.returncode != 0:
-                time.sleep(1)
-                continue
-
-            text = result.stdout.strip()
-            if text == last_text or text == "":
-                time.sleep(1)
-                continue
-
-            date_str = datetime.now().strftime("%Y-%m-%d")
-            record = {
-                "time": datetime.now().isoformat(),
-                "text": text,
-                "length": len(text)
-            }
-
-            filepath = f"records/{date_str}.jsonl"
-            with open(filepath, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-            last_text = text
-            print(f"[{record['time']}] recorded ({len(text)} chars)")
+                pass
+            except Exception as e:
+                print(f"[ERROR] {e}")
 
             time.sleep(1)
 
